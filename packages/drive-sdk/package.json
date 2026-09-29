@@ -1,7 +1,7 @@
 {
   "name": "@formstr/drive-sdk",
-  "version": "0.1.0",
-  "description": "Protocol-only NIP-FS helpers for encrypted files on Nostr and Blossom",
+  "version": "0.2.0",
+  "description": "NIP-FS for Formstr Drive: encrypted file metadata on Nostr, single blobs on Blossom, and file sharing \u2014 byte-compatible with formstr-drive",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -29,6 +29,7 @@
   },
   "files": [
     "dist",
+    "docs",
     "LICENSE",
     "README.md"
   ],

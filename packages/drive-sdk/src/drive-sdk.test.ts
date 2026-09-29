@@ -344,7 +344,8 @@ describe("folder metadata", () => {
     store.emit({ ...old.event, id: "1".repeat(64) });
     store.emit({ ...current.event, id: "2".repeat(64) });
     expect(received.at(-1)).toEqual([{ id: "same", name: "Current" }]);
-    store.emit({ ...current.event, content: "invalid", id: "3".repeat(64) });
+    // Same created_at as `current`; the lower id wins the tie, as it does on relays (NIP-01).
+    store.emit({ ...current.event, content: "invalid", id: "1".repeat(64) });
     store.emit({ ...old.event, id: "0".repeat(64) });
     expect(store.filters[0]).toEqual([{ authors: [PUBKEY], kinds: [METADATA_KIND], "#t": ["folder"] }]);
     expect(received.at(-1)).toEqual([]);
