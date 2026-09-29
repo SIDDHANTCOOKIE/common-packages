@@ -1,4 +1,5 @@
-export { createBlossomAuthorization, createFetchBlossomTransport } from "./blossom.js";
+export { createBlossomAuthorization, createFetchBlossomTransport, DEFINITIVE_REFUSAL_STATUSES } from "./blossom.js";
+export type { FetchTransportOptions } from "./blossom.js";
 export { BLOSSOM_AUTH_KIND, DEFAULT_CHUNK_SIZE, DRIVE_SDK_CLIENT, METADATA_KIND } from "./constants.js";
 export {
   decryptFileBytes,
@@ -13,7 +14,10 @@ export { decryptRange, streamDecrypt } from "./stream.js";
 export type { ByteReader, FetchRange, RangeResponse } from "./stream.js";
 export { MAX_CREATED_AT_DRIFT_SECONDS, nextCreatedAt } from "./clock.js";
 export {
+  AllServersFailedError,
   AppShapedFileError,
+  BlossomHttpError,
+  UploadRefusedError,
   BlobOverrunError,
   BlobTruncatedError,
   IntegrityError,
@@ -29,6 +33,7 @@ export {
   ShareKeyMissingError,
   ShareNotFoundError,
 } from "./errors.js";
+export type { ServerFailure } from "./errors.js";
 export { buildEvent, decryptWithKeys } from "./events.js";
 export type { BuildEventArgs, EventSubtype } from "./events.js";
 export { readFileMetadata, toBlobFile } from "./file-entry.js";
@@ -58,7 +63,11 @@ export type {
   PublishedDriveKey,
   RotateDriveKeyOptions,
 } from "./drive-key.js";
-export { downloadFile, fetchFiles, fetchFolders, uploadEncryptedFile, uploadFile } from "./files.js";
+export { downloadFile, downloadFileStream, fetchFiles, fetchFolders, readFileRange, uploadEncryptedFile, uploadFile } from "./files.js";
+export { findDuplicate, findHashesStillReferenced, isBlobLive, linkDuplicate } from "./dedup.js";
+export type { LinkDuplicateInputs } from "./dedup.js";
+export { deleteFile, moveFile, moveFolder, renameFile, renameFolder } from "./file-ops.js";
+export type { BlobDeletion, DeleteFileContext, DeleteFileOptions, DeleteFileResult, RepublishContext, Republished } from "./file-ops.js";
 export { createFileMetadata, createFolderMetadata, decryptFileEntry, decryptFileMetadata, decryptFolderMetadata, keyringConversationKeys, randomDTag } from "./metadata.js";
 export { assertEncryptionKeyMetadata, assertFile, assertFolder, encryptionKeyMetadataSchema, fileSchema, folderSchema, isEncryptionKeyMetadata, isFile, isFolder } from "./schema.js";
 export type { EncryptionKeyMetadata, File, Folder } from "./schema.js";
@@ -86,6 +95,7 @@ export type {
   UploadFileContext,
   UploadFileInputs,
   UploadFileResult,
+  UploadOutcome,
 } from "./types.js";
 export { publishDeletionRequest } from "./deletion.js";
 export {

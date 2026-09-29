@@ -456,12 +456,12 @@ describe("Blossom transport and authorization", () => {
 });
 
 describe("upload and download workflows", () => {
-  it("uploads one concatenated blob per server with one authorization", async () => {
+  it("with strategy replicate, uploads one concatenated blob per server with one authorization", async () => {
     const { encrypted } = await encryptedFixture();
     const memory = memoryTransport();
     const progress = vi.fn();
     await uploadEncryptedFile(encrypted, {
-      signer: signer(), transport: memory.transport, servers: ["https://one", "https://two"], now: () => 100, onProgress: progress,
+      signer: signer(), transport: memory.transport, servers: ["https://one", "https://two"], strategy: "replicate", now: () => 100, onProgress: progress,
     });
     expect(memory.uploads.map(({ server }) => server)).toEqual(["https://one", "https://two"]);
     expect(new Set(memory.uploads.map(({ authorization }) => authorization)).size).toBe(1);

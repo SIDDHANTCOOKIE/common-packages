@@ -8,6 +8,38 @@ export class DriveSdkError extends Error {
   }
 }
 
+/** A Blossom server answered with a non-success status. `status` drives retry and refusal decisions. */
+export class BlossomHttpError extends DriveSdkError {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+/** A server refused an upload up front (BUD-06 preflight: 403/413/415). No PUT was attempted. */
+export class UploadRefusedError extends DriveSdkError {
+  constructor(message: string, readonly status?: number) {
+    super(message);
+  }
+}
+
+export interface ServerFailure {
+  server: string;
+  error: unknown;
+  /** True when the server refused at the preflight and no upload was attempted. */
+  refused: boolean;
+}
+
+/** No server took the blob. `failures` is the honest per-server account. */
+export class AllServersFailedError extends DriveSdkError {
+  constructor(readonly failures: ServerFailure[]) {
+    super(
+      `Unable to upload to any Blossom server: ${failures
+        .map((f) => `${f.server} (${f.error instanceof Error ? f.error.message : String(f.error)})`)
+        .join("; ")}`,
+    );
+  }
+}
+
 /**
  * Minting was refused. Carries the verdict that caused it so the host can show
  * the right message: `empty-confirmed` is the only status that ever permits it.
