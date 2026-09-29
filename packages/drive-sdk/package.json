@@ -37,7 +37,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "generate:golden": "node scripts/generate-golden.mjs"
   },
   "dependencies": {
     "@noble/hashes": "^1.8.0",
@@ -47,6 +48,7 @@
   "devDependencies": {
     "@formstr/local-relay": "workspace:*",
     "@vitest/coverage-v8": "^2.0.0",
+    "esbuild": "^0.27.0",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"

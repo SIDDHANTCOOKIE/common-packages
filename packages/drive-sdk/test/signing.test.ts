@@ -413,3 +413,21 @@ describe("hex helpers used by fixtures", () => {
     expect(bytesToHex(hexToBytes(KEY_OLD))).toBe(KEY_OLD);
   });
 });
+
+describe("listing tie-break matches relays", () => {
+  it("on equal created_at the LOWEST event id wins (NIP-01), whatever the arrival order", async () => {
+    const entry = driveKeyEntry(KEY_NEW);
+    const at = (name: string, id: string): Event => ({
+      ...buildEvent({ subtype: "files", d: "same", payload: { ...specFile, name }, conversationKey: entry.conversationKey, signingKey: hexToBytes(KEY_NEW), createdAt: 10 }),
+      id,
+    });
+    for (const order of [["1", "2"], ["2", "1"]]) {
+      const relay = new FakeRelay();
+      const lists: FileEntry[][] = [];
+      for (const n of order) relay.add(at(`name-${n}`, n.repeat(64)));
+      fetchFiles({ store: relay, keyring: ring(), onFiles: (f) => lists.push(f) });
+      await vi.waitFor(() => expect(lists.length).toBeGreaterThan(0));
+      expect(lists.at(-1)![0]!.name).toBe("name-1");
+    }
+  });
+});

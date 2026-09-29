@@ -64,7 +64,8 @@ function fetchMetadata<T, R>(
         const d = tagValue(event, "d");
         if (!d) return;
         const current = entries.get(d);
-        if (current && (current.createdAt > event.created_at || (current.createdAt === event.created_at && current.eventId >= event.id))) return;
+        // Equal created_at: relays keep the LOWEST id (NIP-01), so the listing must too or it disagrees with them.
+        if (current && (current.createdAt > event.created_at || (current.createdAt === event.created_at && current.eventId <= event.id))) return;
         // Recorded even when it fails to decrypt, so an older decryptable version cannot resurrect
         // a file the newest event superseded.
         const entry: { createdAt: number; eventId: string; value?: R } = { createdAt: event.created_at, eventId: event.id };
