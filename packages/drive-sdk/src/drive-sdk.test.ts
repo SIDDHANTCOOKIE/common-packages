@@ -13,11 +13,9 @@ import {
   decryptFileMetadata,
   decryptFolderMetadata,
   decryptSharedFileMetadata,
-  deriveMetadataConversationKey,
   downloadFile,
   encryptFile,
   fetchFiles,
-  fetchEncryptionKey,
   fetchFolders,
   fileSchema,
   folderSchema,
@@ -28,7 +26,6 @@ import {
   shareFile,
   uploadEncryptedFile,
   uploadFile,
-  updateEncryptionKey,
   type BlossomTransport,
   type File,
   type FileEventStore,
@@ -307,107 +304,6 @@ describe("file metadata schema and events", () => {
     const key = metadataKey();
     const invalidContent = nip44.v2.encrypt(JSON.stringify({ ...file, chunkSize: 0 }), key);
     expect(() => decryptFileMetadata(invalidContent, key)).toThrow("/chunkSize");
-  });
-});
-
-describe("decoupled drive encryption key", () => {
-  it("publishes a user metadata event encrypted to the identity signer's own pubkey", async () => {
-    const store = memoryStore();
-    const identity = identitySigner();
-    const updated = await updateEncryptionKey(
-      { dataLayer: store.store, signer: identity },
-      { encryptionKey: ENCRYPTION_KEY, createdAt: 123 },
-    );
-
-    expect(store.published).toHaveLength(1);
-    expect(store.published[0]).toEqual({
-      kind: METADATA_KIND,
-      created_at: 123,
-      tags: [["d", `0:${PUBKEY}`], ["client", DRIVE_SDK_CLIENT]],
-      content: `identity:${btoa(JSON.stringify({ encryptionKey: ENCRYPTION_KEY }))}`,
-    });
-    expect(updated.encryptionKey).toBe(ENCRYPTION_KEY);
-    expect(updated.metadataConversationKey).toEqual(deriveMetadataConversationKey(ENCRYPTION_KEY));
-    expect(updated.event.pubkey).toBe(PUBKEY);
-  });
-
-  it("generates a fresh key by default and rejects invalid updates or publication failures", async () => {
-    const first = await updateEncryptionKey({ dataLayer: memoryStore().store, signer: identitySigner() });
-    const second = await updateEncryptionKey({ dataLayer: memoryStore().store, signer: identitySigner() });
-    expect(first.encryptionKey).toMatch(/^[0-9a-f]{64}$/);
-    expect(second.encryptionKey).not.toBe(first.encryptionKey);
-    expect(second.event.created_at).toBeGreaterThan(first.event.created_at);
-
-    await expect(updateEncryptionKey(
-      { dataLayer: memoryStore().store, signer: identitySigner() },
-      { encryptionKey: "0".repeat(64) },
-    )).rejects.toThrow("valid secp256k1");
-    await expect(updateEncryptionKey(
-      { dataLayer: memoryStore(false).store, signer: identitySigner() },
-      { encryptionKey: ENCRYPTION_KEY },
-    )).rejects.toThrow("No relay accepted");
-  });
-
-  it("fetches and decrypts the newest exact user metadata event", async () => {
-    const store = memoryStore();
-    const identity = identitySigner();
-    const resultPromise = fetchEncryptionKey({ dataLayer: store.store, signer: identity, timeoutMs: 100 });
-    await vi.waitFor(() => expect(store.isObserved()).toBe(true));
-
-    const oldContent = await identity.nip44Encrypt(PUBKEY, JSON.stringify({ encryptionKey: ENCRYPTION_KEY }));
-    const newContent = await identity.nip44Encrypt(PUBKEY, JSON.stringify({ encryptionKey: SHARING_KEY }));
-    store.emit(signedEvent({ kind: METADATA_KIND, created_at: 10, tags: [["d", `0:${PUBKEY}`]], content: oldContent }, "1".repeat(64)));
-    store.emit(signedEvent({ kind: METADATA_KIND, created_at: 20, tags: [["d", `0:${PUBKEY}`]], content: newContent }, "2".repeat(64)));
-    store.eose();
-
-    const result = await resultPromise;
-    expect(store.filters[0]).toEqual([{ kinds: [METADATA_KIND], authors: [PUBKEY], "#d": [`0:${PUBKEY}`] }]);
-    expect(result?.encryptionKey).toBe(SHARING_KEY);
-    expect(result?.metadataConversationKey).toEqual(deriveMetadataConversationKey(SHARING_KEY));
-    expect(store.isObserved()).toBe(false);
-  });
-
-  it("keeps collecting after cache EOSE so a newer live event wins", async () => {
-    const store = memoryStore();
-    const identity = identitySigner();
-    const resultPromise = fetchEncryptionKey({ dataLayer: store.store, signer: identity, timeoutMs: 100 });
-    await vi.waitFor(() => expect(store.isObserved()).toBe(true));
-    const staleContent = await identity.nip44Encrypt(PUBKEY, JSON.stringify({ encryptionKey: SHARING_KEY }));
-    store.emit(signedEvent({ kind: METADATA_KIND, created_at: 1, tags: [["d", `0:${PUBKEY}`]], content: staleContent }));
-    store.eose();
-    expect(store.isObserved()).toBe(true);
-
-    const content = await identity.nip44Encrypt(PUBKEY, JSON.stringify({ encryptionKey: ENCRYPTION_KEY }));
-    store.emit(signedEvent({ kind: METADATA_KIND, created_at: 2, tags: [["d", `0:${PUBKEY}`]], content }));
-    await expect(resultPromise).resolves.toMatchObject({ encryptionKey: ENCRYPTION_KEY });
-  });
-
-  it("returns null for an empty local-only lookup and rejects invalid payloads or cancellation", async () => {
-    const emptyStore = memoryStore();
-    const emptyPromise = fetchEncryptionKey({ dataLayer: emptyStore.store, signer: identitySigner(), localOnly: true });
-    await vi.waitFor(() => expect(emptyStore.isObserved()).toBe(true));
-    emptyStore.eose();
-    await expect(emptyPromise).resolves.toBeNull();
-
-    const invalidStore = memoryStore();
-    const invalidPromise = fetchEncryptionKey({ dataLayer: invalidStore.store, signer: identitySigner(), localOnly: true });
-    await vi.waitFor(() => expect(invalidStore.isObserved()).toBe(true));
-    invalidStore.emit(signedEvent({
-      kind: METADATA_KIND,
-      created_at: 1,
-      tags: [["d", `0:${PUBKEY}`]],
-      content: `identity:${btoa("{}")}`,
-    }));
-    invalidStore.eose();
-    await expect(invalidPromise).rejects.toThrow("/encryptionKey");
-
-    const controller = new AbortController();
-    controller.abort();
-    await expect(fetchEncryptionKey({
-      dataLayer: memoryStore().store,
-      signer: identitySigner(),
-      signal: controller.signal,
-    })).rejects.toMatchObject({ name: "AbortError" });
   });
 });
 

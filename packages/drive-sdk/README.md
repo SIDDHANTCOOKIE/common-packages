@@ -4,20 +4,28 @@
 
 The package has no UI, relay connection, or key-storage policy. Applications inject a Nostr event store, signer, drive metadata conversation key, and Blossom transport.
 
-## Drive Encryption Key
+## Drive Key
 
-The drive key is stored in the user's kind `34578` metadata event at `d=0:<pubkey>`. Its content is encrypted to the user's own pubkey through the identity signer.
+The Drive Key is a secp256k1 secret kept in the user's own kind `34578` event at `d=0:<pubkey>`, encrypted to the identity key. It is a **keyring**: an active key plus every previous key, so files written before a rotation stay readable.
 
 ```ts
-import { fetchEncryptionKey, updateEncryptionKey } from "@formstr/drive-sdk";
+import { resolveDriveKeyStatus } from "@formstr/drive-sdk";
 
-const current = await fetchEncryptionKey({ dataLayer, signer });
-const created = current ?? await updateEncryptionKey({ dataLayer, signer });
-
-const metadataConversationKey = created.metadataConversationKey;
+const status = await resolveDriveKeyStatus({ store, signer, relays, configuredRelays });
+switch (status.kind) {
+  case "ready":           // status.keyring.active / status.keyring.previous
+  case "empty-confirmed": // proven: no key exists. The only status that permits mintDriveKey.
+  case "unresolved":      // status.reason — timeout, unreachable relays, unreadable event…
+}
 ```
 
-`fetchEncryptionKey` keeps its relay interest open for up to `timeoutMs` (10 seconds by default) and returns the newest candidate observed in that window. Set `localOnly: true` for an immediate cache-only lookup. `updateEncryptionKey` rotates to a fresh drive key unless an explicit key is supplied for recovery or migration. Applications should warn users before rotation because metadata encrypted with an earlier key will no longer be readable with the new key.
+`unresolved` is **never** "empty". A timeout, an unreachable relay, an event this build cannot read, or a store that cannot prove relay coverage all resolve to `unresolved`, and nothing in this package creates a key on that verdict.
+
+> **The mint hazard.** There is exactly one Drive Key event per identity, and it is replaceable: publishing a second one does not sit beside the first, it replaces it on every relay that accepts it, orphaning every file under the original key. Never write `current ?? await mintDriveKey(...)`: a `null`/failed lookup is not evidence that no key exists. See [ADR 0003](docs/adr/0003-drive-key-mint-hazard.md).
+
+`mintDriveKey` re-resolves uncached and refuses unless the verdict is `empty-confirmed`. `rotateDriveKey` needs a `ready` keyring and always carries the old active key into `previousKeys`. `healDriveKey` republishes the union when a relay's newest event is narrower than the keys you provably hold. Nothing in the package can publish a keyring that drops a key.
+
+`empty-confirmed` requires the host to pass `configuredRelays` and a store with `seenOn` (local-relay has it): the proof is that every configured relay answered a control query. Without both it is never emitted, and the host decides how to treat a first-time user.
 
 ## Install
 

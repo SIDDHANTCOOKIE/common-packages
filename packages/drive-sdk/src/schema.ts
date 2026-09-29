@@ -32,6 +32,7 @@ export type Folder = Static<typeof folderSchema>;
 
 export const encryptionKeyMetadataSchema = Type.Object({
   encryptionKey: Type.String({ pattern: SHA256_HEX }),
+  previousKeys: Type.Optional(Type.Array(Type.String({ pattern: SHA256_HEX }))),
 }, { additionalProperties: false });
 
 export type EncryptionKeyMetadata = Static<typeof encryptionKeyMetadataSchema>;
@@ -41,7 +42,7 @@ function hasValidEncryptionKey(value: File): boolean {
   return scalar > 0n && scalar < SECP256K1_ORDER;
 }
 
-function isValidEncryptionKey(value: string): boolean {
+export function isValidEncryptionKey(value: string): boolean {
   const scalar = BigInt(`0x${value}`);
   return scalar > 0n && scalar < SECP256K1_ORDER;
 }
@@ -74,7 +75,9 @@ export function assertFolder(value: unknown): asserts value is Folder {
 }
 
 export function isEncryptionKeyMetadata(value: unknown): value is EncryptionKeyMetadata {
-  return Value.Check(encryptionKeyMetadataSchema, value) && isValidEncryptionKey(value.encryptionKey);
+  return Value.Check(encryptionKeyMetadataSchema, value)
+    && isValidEncryptionKey(value.encryptionKey)
+    && (value.previousKeys ?? []).every(isValidEncryptionKey);
 }
 
 export function assertEncryptionKeyMetadata(value: unknown): asserts value is EncryptionKeyMetadata {

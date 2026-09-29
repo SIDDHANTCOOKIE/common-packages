@@ -17,27 +17,45 @@ export interface FileSigner {
   signEvent(event: EventTemplate): Promise<Event>;
 }
 
+/** The user's main identity signer: signs the Drive Key event and Blossom auth, and encrypts to self. */
+export interface IdentitySigner extends FileSigner, IdentityEncryptionSigner {}
+
 export interface IdentityEncryptionSigner {
   getPublicKey(): Promise<string>;
   nip44Encrypt(peerPubkey: string, plaintext: string): Promise<string>;
   nip44Decrypt(peerPubkey: string, ciphertext: string): Promise<string>;
 }
 
-/** Structural subset of @formstr/local-relay's DataLayer used by this package. */
-export interface FileEventStore {
-  observe(
-    filters: Filter[],
-    handlers: { onEvent(event: Event): void; onEose?(): void },
-    options?: { localOnly?: boolean; relays?: string[] },
-  ): { unobserve(): void };
-  publish(template: EventTemplate): Promise<{ event: Event; result: FilePublishResult }>;
+/** One relay's answer to a publish, as reported by @formstr/local-relay. */
+export interface FileRelayOutcome {
+  relay: string;
+  status: string;
+  message?: string;
 }
 
 export interface FilePublishResult {
   ok: boolean;
   accepted: number;
   total: number;
-  relayResults: unknown[];
+  relayResults: FileRelayOutcome[];
+}
+
+/**
+ * Structural subset of @formstr/local-relay (>=0.6) DataLayer used by this
+ * package. `relays` on observe/publishEvent are per-call hints — nothing here
+ * mutates the host's global routing.
+ */
+export interface FileEventStore {
+  observe(
+    filters: Filter[],
+    handlers: { onEvent(event: Event): void; onEose?(): void },
+    options?: { localOnly?: boolean; relays?: string[] },
+  ): { unobserve(): void };
+  publishEvent(event: Event, options?: { relays?: string[] }): Promise<FilePublishResult>;
+  /** Relays an event was observed on. Only needed to prove relay coverage (see docs/adr/0003). */
+  seenOn?(eventId: string): Promise<string[]>;
+  /** @deprecated removed in the signing commit — events are signed here, not by the store. */
+  publish(template: EventTemplate): Promise<{ event: Event; result: FilePublishResult }>;
 }
 
 export interface FileProgress {
@@ -198,35 +216,5 @@ export interface ShareFileContext extends SharedFileOptions {
 
 export interface ShareFileResult extends CreatedSharedFileMetadata {
   signedEvent: Event;
-  publishResult: FilePublishResult;
-}
-
-export interface FetchEncryptionKeyContext {
-  dataLayer: FileEventStore;
-  signer: IdentityEncryptionSigner;
-  relayHints?: string[];
-  localOnly?: boolean;
-  timeoutMs?: number;
-  signal?: AbortSignal;
-}
-
-export interface FetchedEncryptionKey {
-  encryptionKey: string;
-  metadataConversationKey: Uint8Array;
-  event: Event;
-}
-
-export interface UpdateEncryptionKeyOptions {
-  encryptionKey?: string;
-  createdAt?: number;
-  client?: string;
-}
-
-export interface UpdateEncryptionKeyContext {
-  dataLayer: FileEventStore;
-  signer: IdentityEncryptionSigner;
-}
-
-export interface UpdatedEncryptionKey extends FetchedEncryptionKey {
   publishResult: FilePublishResult;
 }
