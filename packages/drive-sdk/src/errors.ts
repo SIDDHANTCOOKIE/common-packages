@@ -34,3 +34,33 @@ export class DriveKeyUnavailableError extends DriveSdkError {
 
 /** A publish would have removed a secret the keyring already holds. Never allowed. */
 export class DriveKeyDroppedError extends DriveSdkError {}
+
+/**
+ * The file predates the NIP-FS single-blob layout: one Blossom blob per chunk (`chunks`, no
+ * `blobHash`). It parses and lists, but the SDK cannot decrypt it — see docs/adr/0002.
+ */
+export class LegacyChunkedFileError extends DriveSdkError {
+  constructor(readonly fileId?: string) {
+    super("This file uses the legacy per-chunk blob layout, which this SDK cannot download or reuse");
+  }
+}
+
+/** File metadata that is neither the spec shape nor the app's current shape. */
+export class InvalidFileMetadataError extends DriveSdkError {}
+
+/**
+ * An operation would have to translate an app-shaped file (folder = a path string, no parent id)
+ * into the spec's parent-id model, which cannot be done without inventing an id.
+ */
+export class AppShapedFileError extends DriveSdkError {
+  constructor(operation: string) {
+    super(`Cannot ${operation} a file written by the formstr-drive app: it places files by folder path, not by parent id`);
+  }
+}
+
+/** Folder sharing (`t=container`) is out of scope for this SDK. */
+export class FolderShareUnsupportedError extends DriveSdkError {
+  constructor(operation = "resolve") {
+    super(`Folder shares are not supported (cannot ${operation} a t=container share)`);
+  }
+}

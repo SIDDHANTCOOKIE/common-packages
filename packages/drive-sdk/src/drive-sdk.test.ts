@@ -1,4 +1,4 @@
-import { getPublicKey, nip44, type Event, type EventTemplate, type Filter } from "nostr-tools";
+import { getPublicKey, nip44, verifyEvent, type Event, type EventTemplate, type Filter } from "nostr-tools";
 import { hexToBytes } from "nostr-tools/utils";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -14,6 +14,7 @@ import {
   decryptFolderMetadata,
   decryptSharedFileMetadata,
   downloadFile,
+  driveKeyEntry,
   encryptFile,
   fetchFiles,
   fetchFolders,
@@ -30,7 +31,7 @@ import {
   type File,
   type FileEventStore,
   type FileSigner,
-  type IdentityEncryptionSigner,
+  type DriveKeyring,
 } from "./index.js";
 
 const PUBKEY = "a".repeat(64);
@@ -48,6 +49,14 @@ function metadataKey(): Uint8Array {
   return nip44.v2.utils.getConversationKey(secret, getPublicKey(secret));
 }
 
+/** The keyring whose active key's conversation key equals metadataKey(). */
+function testKeyring(previousSecret?: string): DriveKeyring {
+  return {
+    active: driveKeyEntry("03".repeat(32)),
+    previous: previousSecret ? [driveKeyEntry(previousSecret)] : [],
+  };
+}
+
 function signedEvent(template: EventTemplate, id = "c".repeat(64), pubkey = PUBKEY): Event {
   return { ...template, id, pubkey, sig: SIGNATURE };
 }
@@ -57,20 +66,6 @@ function signer(overrides: Partial<FileSigner> = {}): FileSigner {
     getPublicKey: async () => PUBKEY,
     signEvent: async (template) => signedEvent(template),
     ...overrides,
-  };
-}
-
-function identitySigner(pubkey = PUBKEY): IdentityEncryptionSigner {
-  return {
-    getPublicKey: async () => pubkey,
-    nip44Encrypt: async (peerPubkey, plaintext) => {
-      if (peerPubkey !== pubkey) throw new Error("wrong peer");
-      return `identity:${btoa(plaintext)}`;
-    },
-    nip44Decrypt: async (peerPubkey, ciphertext) => {
-      if (peerPubkey !== pubkey || !ciphertext.startsWith("identity:")) throw new Error("invalid identity ciphertext");
-      return atob(ciphertext.slice("identity:".length));
-    },
   };
 }
 
@@ -106,14 +101,14 @@ function memoryTransport(): {
 
 function memoryStore(resultOk = true): {
   store: FileEventStore;
-  published: EventTemplate[];
+  published: Event[];
   filters: Filter[][];
   emit(event: Event): void;
   eose(): void;
   isObserved(): boolean;
 } {
   let handlers: { onEvent(event: Event): void; onEose?(): void } | undefined;
-  const published: EventTemplate[] = [];
+  const published: Event[] = [];
   const filters: Filter[][] = [];
   return {
     published,
@@ -124,12 +119,9 @@ function memoryStore(resultOk = true): {
         handlers = nextHandlers;
         return { unobserve: () => { handlers = undefined; } };
       },
-      publish: async (template) => {
-        published.push(template);
-        return {
-          event: signedEvent(template, "d".repeat(64)),
-          result: { ok: resultOk, accepted: resultOk ? 1 : 0, total: 1, relayResults: [] },
-        };
+      publishEvent: async (event) => {
+        published.push(event);
+        return { ok: resultOk, accepted: resultOk ? 1 : 0, total: 1, relayResults: [] };
       },
     },
     emit: (event) => handlers?.onEvent(event),
@@ -284,12 +276,16 @@ describe("file metadata schema and events", () => {
     const created = createFileMetadata({
       name: file.name, unencryptedFileHash: file.unencryptedFileHash, size: file.size, type: file.type,
       parent: file.parent, servers: file.servers, encryptionKey: file.encryptionKey, blobHash: file.blobHash,
-      chunkSize: file.chunkSize, metadataConversationKey: key, previewHash: "4".repeat(64),
+      chunkSize: file.chunkSize, keyring: testKeyring(), previewHash: "4".repeat(64),
       d: "file1234", createdAt: 123, uploadedAt: 456, client: "test-client",
     });
 
     expect(created.event).toMatchObject({ kind: 34578, created_at: 123 });
-    expect(created.event.tags).toEqual([["d", "file1234"], ["t", "files"], ["encrypted", "nip44"], ["client", "test-client"]]);
+    // Tag order is wire format: d, t, client, encrypted (matches the app).
+    expect(created.event.tags).toEqual([["d", "file1234"], ["t", "files"], ["client", "test-client"], ["encrypted", "nip44"]]);
+    // Signed by the Drive Key, not an identity signer.
+    expect(created.event.pubkey).toBe(testKeyring().active.publicKey);
+    expect(verifyEvent(created.event)).toBe(true);
     expect(created.file).not.toHaveProperty("folder");
     expect(created.file).not.toHaveProperty("chunks");
     expect(created.file).toMatchObject({ parent: "root", servers: ["https://one.example"], blobHash: encrypted.blobHash, chunkSize: 8 });
@@ -298,8 +294,7 @@ describe("file metadata schema and events", () => {
 
   it("rejects invalid metadata inputs and decrypted payloads with useful paths", async () => {
     const { file } = await encryptedFixture();
-    expect(() => createFileMetadata({ ...file, metadataConversationKey: new Uint8Array() })).toThrow("32 bytes");
-    expect(() => createFileMetadata({ ...file, metadataConversationKey: metadataKey(), servers: [] })).toThrow("/servers");
+    expect(() => createFileMetadata({ ...file, keyring: testKeyring(), servers: [] })).toThrow("/servers");
 
     const key = metadataKey();
     const invalidContent = nip44.v2.encrypt(JSON.stringify({ ...file, chunkSize: 0 }), key);
@@ -321,19 +316,18 @@ describe("folder metadata", () => {
     const created = createFolderMetadata({
       name: "Documents",
       parent: "root",
-      metadataConversationKey: key,
+      keyring: testKeyring(),
       d: "folder1",
       createdAt: 123,
     });
-    expect(created.event).toEqual({
+    expect(created.event).toMatchObject({
       kind: METADATA_KIND,
       created_at: 123,
-      tags: [["d", "folder1"], ["t", "folder"], ["encrypted", "nip44"], ["client", DRIVE_SDK_CLIENT]],
-      content: created.event.content,
+      tags: [["d", "folder1"], ["t", "folder"], ["client", DRIVE_SDK_CLIENT], ["encrypted", "nip44"]],
+      pubkey: testKeyring().active.publicKey,
     });
     expect(decryptFolderMetadata(created.event.content, key)).toEqual({ name: "Documents", parent: "root" });
-    expect(() => createFolderMetadata({ name: "", parent: "", metadataConversationKey: key })).toThrow("/name");
-    expect(() => createFolderMetadata({ name: "Documents", parent: "", metadataConversationKey: new Uint8Array() })).toThrow("32 bytes");
+    expect(() => createFolderMetadata({ name: "", parent: "", keyring: testKeyring() })).toThrow("/name");
   });
 
   it("fetches newest folder replacements and skips invalid events", () => {
@@ -341,19 +335,20 @@ describe("folder metadata", () => {
     const store = memoryStore();
     const received: Array<Array<{ id: string; name: string }>> = [];
     const onError = vi.fn();
-    const handle = fetchFolders({ authors: [PUBKEY] }, {
-      dataLayer: store.store,
-      metadataConversationKey: key,
+    const handle = fetchFolders({
+      store: store.store,
+      keyring: testKeyring(),
+      filter: { authors: [PUBKEY] },
       onFolders: (folders) => received.push(folders.map((folder) => ({ id: folder.id, name: folder.name }))),
       onError,
     });
-    const old = createFolderMetadata({ name: "Old", parent: "", metadataConversationKey: key, d: "same", createdAt: 1 });
-    const current = createFolderMetadata({ name: "Current", parent: "root", metadataConversationKey: key, d: "same", createdAt: 2 });
-    store.emit(signedEvent(old.event, "1".repeat(64)));
-    store.emit(signedEvent(current.event, "2".repeat(64)));
+    const old = createFolderMetadata({ name: "Old", parent: "", keyring: testKeyring(), d: "same", createdAt: 1 });
+    const current = createFolderMetadata({ name: "Current", parent: "root", keyring: testKeyring(), d: "same", createdAt: 2 });
+    store.emit({ ...old.event, id: "1".repeat(64) });
+    store.emit({ ...current.event, id: "2".repeat(64) });
     expect(received.at(-1)).toEqual([{ id: "same", name: "Current" }]);
-    store.emit(signedEvent({ ...current.event, content: "invalid" }, "3".repeat(64)));
-    store.emit(signedEvent(old.event, "0".repeat(64)));
+    store.emit({ ...current.event, content: "invalid", id: "3".repeat(64) });
+    store.emit({ ...old.event, id: "0".repeat(64) });
     expect(store.filters[0]).toEqual([{ authors: [PUBKEY], kinds: [METADATA_KIND], "#t": ["folder"] }]);
     expect(received.at(-1)).toEqual([]);
     expect(onError).toHaveBeenCalledOnce();
@@ -364,12 +359,13 @@ describe("folder metadata", () => {
 describe("file sharing", () => {
   it("duplicates metadata into a shared-file event encrypted to a fresh ephemeral pair", async () => {
     const { file } = await encryptedFixture();
-    const shared = createSharedFileMetadata(file, { d: "share123", createdAt: 77, client: "test" });
+    const shared = createSharedFileMetadata(file, { keyring: testKeyring(), d: "share123", createdAt: 77, client: "test" });
 
     expect(shared.sharingKey).toMatch(/^[0-9a-f]{64}$/);
     expect(shared.publicSharingKey).toBe(getPublicKey(hexToBytes(shared.sharingKey)));
     expect(shared.event).toMatchObject({ kind: 34578, created_at: 77 });
-    expect(shared.event.tags).toEqual([["d", "share123"], ["t", "shared-file"], ["encrypted", "nip44"], ["client", "test"]]);
+    expect(shared.event.tags).toEqual([["d", "share123"], ["t", "shared-file"], ["client", "test"], ["encrypted", "nip44"]]);
+    expect(shared.event.pubkey).toBe(testKeyring().active.publicKey); // authored by the Drive Key
     expect(decryptSharedFileMetadata(shared.event.content, shared.sharingKey)).toEqual(file);
     expect(() => decryptSharedFileMetadata(shared.event.content, ENCRYPTION_KEY)).toThrow();
   });
@@ -377,17 +373,17 @@ describe("file sharing", () => {
   it("generates sharing keys, validates input, and publishes without uploading a blob", async () => {
     const { file } = await encryptedFixture();
     const store = memoryStore();
-    const result = await shareFile(file, { dataLayer: store.store });
+    const result = await shareFile(file, { store: store.store, keyring: testKeyring() });
     expect(result.sharingKey).toMatch(/^[0-9a-f]{64}$/);
     expect(result.signedEvent.tags).toContainEqual(["t", "shared-file"]);
     expect(result.publishResult.ok).toBe(true);
     expect(store.published).toHaveLength(1);
-    expect(createSharedFileMetadata(file).sharingKey).not.toBe(result.sharingKey);
+    expect(createSharedFileMetadata(file, { keyring: testKeyring() }).sharingKey).not.toBe(result.sharingKey);
   });
 
   it("reports publication failure", async () => {
     const { file } = await encryptedFixture();
-    await expect(shareFile(file, { dataLayer: memoryStore(false).store })).rejects.toThrow("No relay accepted");
+    await expect(shareFile(file, { store: memoryStore(false).store, keyring: testKeyring() })).rejects.toThrow("No relay accepted");
   });
 });
 
@@ -398,18 +394,18 @@ describe("file observation", () => {
     const received: string[][] = [];
     const onEose = vi.fn();
     const onError = vi.fn();
-    const handle = fetchFiles({ authors: [PUBKEY] }, {
-      dataLayer: store.store, metadataConversationKey: key, relayHints: ["wss://relay.example"],
+    const handle = fetchFiles({
+      store: store.store, keyring: testKeyring(), filter: { authors: [PUBKEY] }, relayHints: ["wss://relay.example"],
       onFiles: (files) => received.push(files.map((file) => file.name)), onEose, onError,
     });
-    expect(store.filters[0]).toEqual([{ authors: [PUBKEY], kinds: [34578], "#t": ["files"] }]);
+    expect(store.filters[0]).toEqual([{ authors: [PUBKEY], kinds: [34578] }]);
 
     const { file } = await encryptedFixture();
-    const create = (name: string, createdAt: number) => createFileMetadata({ ...file, name, metadataConversationKey: key, d: "same", createdAt });
-    store.emit(signedEvent(create("old", 10).event, "1".repeat(64)));
-    store.emit(signedEvent(create("tie-winner", 10).event, "2".repeat(64)));
-    store.emit(signedEvent(create("tie-loser", 10).event, "0".repeat(64)));
-    store.emit(signedEvent(create("new", 20).event, "3".repeat(64)));
+    const create = (name: string, createdAt: number) => createFileMetadata({ ...file, name, keyring: testKeyring(), d: "same", createdAt });
+    store.emit({ ...create("old", 10).event, id: "1".repeat(64) });
+    store.emit({ ...create("tie-winner", 10).event, id: "2".repeat(64) });
+    store.emit({ ...create("tie-loser", 10).event, id: "0".repeat(64) });
+    store.emit({ ...create("new", 20).event, id: "3".repeat(64) });
     expect(received.at(-1)).toEqual(["new"]);
     expect(onError).not.toHaveBeenCalled();
 
@@ -423,7 +419,7 @@ describe("file observation", () => {
     const store = memoryStore();
     const onFiles = vi.fn();
     const onError = vi.fn();
-    fetchFiles({}, { dataLayer: store.store, metadataConversationKey: metadataKey(), onFiles, onError });
+    fetchFiles({ store: store.store, keyring: testKeyring(), onFiles, onError });
     const wrongKind = signedEvent({ kind: 1, created_at: 1, tags: [["d", "x"], ["t", "files"]], content: "bad" });
     const wrongTag = signedEvent({ kind: 34578, created_at: 1, tags: [["d", "x"], ["t", "folder"]], content: "bad" });
     const noD = signedEvent({ kind: 34578, created_at: 1, tags: [["t", "files"]], content: "bad" });
@@ -525,8 +521,8 @@ describe("upload and download workflows", () => {
     const store = memoryStore();
     const result = await uploadFile(new Blob(["complete upload"]), {
       name: "complete.txt", type: "text/plain", parent: "docs", servers: ["https://one.example"],
-      metadataConversationKey: metadataKey(), chunkSize: 5, d: "upload1", createdAt: 50, uploadedAt: 60,
-    }, { dataLayer: store.store, signer: signer(), transport: memory.transport });
+      chunkSize: 5, d: "upload1", createdAt: 50, uploadedAt: 60,
+    }, { store: store.store, keyring: testKeyring(), signer: signer(), transport: memory.transport });
     expect(memory.uploads).toHaveLength(1);
     expect(store.published).toHaveLength(1);
     expect(result.metadata.file).toMatchObject({ parent: "docs", servers: ["https://one.example"], chunkSize: 5 });
@@ -537,13 +533,13 @@ describe("upload and download workflows", () => {
   it("does not upload invalid metadata and reports publication failure", async () => {
     const memory = memoryTransport();
     await expect(uploadFile(new Uint8Array([1]), {
-      name: "bad", type: "x", parent: "", servers: [], metadataConversationKey: metadataKey(),
-    }, { dataLayer: memoryStore().store, signer: signer(), transport: memory.transport })).rejects.toThrow("/servers");
+      name: "bad", type: "x", parent: "", servers: [],
+    }, { store: memoryStore().store, keyring: testKeyring(), signer: signer(), transport: memory.transport })).rejects.toThrow("/servers");
     expect(memory.uploads).toHaveLength(0);
 
     await expect(uploadFile(new Uint8Array([1]), {
-      name: "ok", type: "x", parent: "", servers: ["https://one"], metadataConversationKey: metadataKey(),
-    }, { dataLayer: memoryStore(false).store, signer: signer(), transport: memory.transport })).rejects.toThrow("No relay accepted");
+      name: "ok", type: "x", parent: "", servers: ["https://one"],
+    }, { store: memoryStore(false).store, keyring: testKeyring(), signer: signer(), transport: memory.transport })).rejects.toThrow("No relay accepted");
   });
 
   it("downloads once, authorizes the blob hash, verifies it, and preserves MIME type", async () => {

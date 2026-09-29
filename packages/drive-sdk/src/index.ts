@@ -3,11 +3,19 @@ export { BLOSSOM_AUTH_KIND, DEFAULT_CHUNK_SIZE, DRIVE_SDK_CLIENT, METADATA_KIND 
 export { decryptFileBytes, encryptFile } from "./crypto.js";
 export { MAX_CREATED_AT_DRIFT_SECONDS, nextCreatedAt } from "./clock.js";
 export {
+  AppShapedFileError,
   DriveKeyDroppedError,
   DriveKeyMintRefusedError,
   DriveKeyUnavailableError,
   DriveSdkError,
+  FolderShareUnsupportedError,
+  InvalidFileMetadataError,
+  LegacyChunkedFileError,
 } from "./errors.js";
+export { buildEvent, decryptWithKeys } from "./events.js";
+export type { BuildEventArgs, EventSubtype } from "./events.js";
+export { readFileMetadata, toBlobFile } from "./file-entry.js";
+export type { BlobFile, FileEntry, FileEntryMeta } from "./file-entry.js";
 export {
   assertKeyringPreserved,
   createDriveKeyStatusCache,
@@ -34,7 +42,7 @@ export type {
   RotateDriveKeyOptions,
 } from "./drive-key.js";
 export { downloadFile, fetchFiles, fetchFolders, shareFile, uploadEncryptedFile, uploadFile } from "./files.js";
-export { createFileMetadata, createFolderMetadata, createSharedFileMetadata, decryptFileMetadata, decryptFolderMetadata, decryptSharedFileMetadata } from "./metadata.js";
+export { createFileMetadata, createFolderMetadata, createSharedFileMetadata, decryptFileEntry, decryptFileMetadata, decryptFolderMetadata, decryptSharedFileMetadata, keyringConversationKeys, randomDTag } from "./metadata.js";
 export { assertEncryptionKeyMetadata, assertFile, assertFolder, encryptionKeyMetadataSchema, fileSchema, folderSchema, isEncryptionKeyMetadata, isFile, isFolder } from "./schema.js";
 export type { EncryptionKeyMetadata, File, Folder } from "./schema.js";
 export type {

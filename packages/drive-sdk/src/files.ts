@@ -1,9 +1,12 @@
 import { createBlossomAuthorization } from "./blossom.js";
 import { METADATA_KIND } from "./constants.js";
+import { keyringEntries } from "./drive-key.js";
+import { tagValue } from "./events.js";
+import { toBlobFile, type BlobFile, type FileEntry } from "./file-entry.js";
 import { decryptFileBytes, encryptFile } from "./crypto.js";
 import { throwIfAborted } from "./encoding.js";
-import { createFileMetadata, createSharedFileMetadata, decryptFileMetadata, decryptFolderMetadata } from "./metadata.js";
-import { assertFile, type File, type Folder } from "./schema.js";
+import { createFileMetadata, createSharedFileMetadata, decryptFileEntry, decryptFolderMetadata, keyringConversationKeys } from "./metadata.js";
+import type { File, Folder } from "./schema.js";
 import type { DownloadFileContext, EncryptedFile, FileFetchHandle, FetchFilesContext, FetchFoldersContext, FolderEntry, FolderFetchHandle, ShareFileContext, ShareFileResult, UploadBlobContext, UploadFileContext, UploadFileInputs, UploadFileResult } from "./types.js";
 import type { Event, Filter } from "nostr-tools";
 
@@ -17,47 +20,59 @@ function emitProgress(
 }
 
 interface FetchMetadataContext {
-  dataLayer: FetchFilesContext["dataLayer"];
-  metadataConversationKey: Uint8Array;
+  store: FetchFilesContext["store"];
+  keyring: FetchFilesContext["keyring"];
+  filter?: Filter;
   onEose?: () => void;
   onError?: (error: unknown) => void;
   relayHints?: string[];
 }
 
 function fetchMetadata<T, R>(
-  filter: Filter,
   subtype: "files" | "folder",
   context: FetchMetadataContext,
-  decrypt: (content: string, key: Uint8Array) => T,
+  decrypt: (event: Event, keys: Uint8Array[]) => T,
   toResult: (value: T, event: Event, d: string) => R,
   onValues: (values: R[]) => void,
+  isLive: (value: R) => boolean = () => true,
 ): FileFetchHandle {
+  // Keyed by `d` alone, not (author, d): after a Drive Key rotation the same file is republished under
+  // the new key and must replace the old event, exactly as the app's file index does.
   const entries = new Map<string, { createdAt: number; eventId: string; value?: R }>();
-  const metadataFilter: Filter = { ...filter, kinds: [METADATA_KIND], "#t": [subtype] };
+  const keys = keyringConversationKeys(context.keyring);
+  const metadataFilter: Filter = {
+    ...context.filter,
+    kinds: [METADATA_KIND],
+    authors: context.filter?.authors ?? keyringEntries(context.keyring).map((entry) => entry.publicKey),
+    // Not filtered by `#t` for files: some legacy events predate the tag. Other subtypes (shares,
+    // bookkeeping) carry a different `t` and are skipped below.
+    ...(subtype === "folder" ? { "#t": ["folder"] } : {}),
+  };
   let stopped = false;
   const emit = () => onValues([...entries.values()]
     .sort((a, b) => b.createdAt - a.createdAt || b.eventId.localeCompare(a.eventId))
-    .flatMap((entry) => entry.value === undefined ? [] : [entry.value]));
-  const handle = context.dataLayer.observe(
+    .flatMap((entry) => entry.value !== undefined && isLive(entry.value) ? [entry.value] : []));
+  const handle = context.store.observe(
     [metadataFilter],
     {
       onEvent(event) {
-        if (stopped) return;
-        if (event.kind !== METADATA_KIND || !event.tags.some((tag) => tag[0] === "t" && tag[1] === subtype)) return;
-        const d = event.tags.find((tag) => tag[0] === "d")?.[1];
+        if (stopped || event.kind !== METADATA_KIND) return;
+        const type = tagValue(event, "t");
+        if (type !== undefined && type !== subtype) return;
+        const d = tagValue(event, "d");
         if (!d) return;
-        const key = `${event.pubkey}:${d}`;
-        const current = entries.get(key);
+        const current = entries.get(d);
         if (current && (current.createdAt > event.created_at || (current.createdAt === event.created_at && current.eventId >= event.id))) return;
+        // Recorded even when it fails to decrypt, so an older decryptable version cannot resurrect
+        // a file the newest event superseded.
         const entry: { createdAt: number; eventId: string; value?: R } = { createdAt: event.created_at, eventId: event.id };
-        entries.set(key, entry);
+        entries.set(d, entry);
         try {
-          entry.value = toResult(decrypt(event.content, context.metadataConversationKey), event, d);
-          emit();
+          entry.value = toResult(decrypt(event, keys), event, d);
         } catch (error) {
           context.onError?.(error);
-          emit();
         }
+        emit();
       },
       onEose: () => context.onEose?.(),
     },
@@ -66,12 +81,25 @@ function fetchMetadata<T, R>(
   return { stop: () => { stopped = true; handle.unobserve(); } };
 }
 
-export function fetchFiles(filter: Filter, context: FetchFilesContext): FileFetchHandle {
-  return fetchMetadata<File, File>(filter, "files", context, decryptFileMetadata, (file) => file, context.onFiles);
+export function fetchFiles(context: FetchFilesContext): FileFetchHandle {
+  return fetchMetadata<FileEntry, FileEntry>(
+    "files",
+    context,
+    (event, keys) => decryptFileEntry(event, keys),
+    (entry) => entry,
+    context.onFiles,
+    (entry) => !entry.deleted,
+  );
 }
 
-export function fetchFolders(filter: Filter, context: FetchFoldersContext): FolderFetchHandle {
-  return fetchMetadata<Folder, FolderEntry>(filter, "folder", context, decryptFolderMetadata, (folder, _event, d) => ({ ...folder, id: d }), context.onFolders);
+export function fetchFolders(context: FetchFoldersContext): FolderFetchHandle {
+  return fetchMetadata<Folder, FolderEntry>(
+    "folder",
+    context,
+    (event, keys) => decryptFolderMetadata(event.content, keys),
+    (folder, _event, d) => ({ ...folder, id: d }),
+    context.onFolders,
+  );
 }
 
 export async function uploadEncryptedFile(encryptedFile: EncryptedFile, context: UploadBlobContext): Promise<void> {
@@ -100,8 +128,8 @@ export async function uploadEncryptedFile(encryptedFile: EncryptedFile, context:
   }
 }
 
-export async function downloadFile(file: File, context: DownloadFileContext): Promise<Blob> {
-  assertFile(file);
+export async function downloadFile(source: File | FileEntry | BlobFile, context: DownloadFileContext): Promise<Blob> {
+  const file = toBlobFile(source);
   const expectedSize = file.size + Math.max(1, Math.ceil(file.size / file.chunkSize)) * 16;
   const authorization = context.authorization
     ?? (context.signer
@@ -148,7 +176,7 @@ export async function uploadFile(
     type: inputs.type,
     parent: inputs.parent,
     servers: inputs.servers,
-    metadataConversationKey: inputs.metadataConversationKey,
+    keyring: context.keyring,
     ...(inputs.previewHash ? { previewHash: inputs.previewHash } : {}),
     uploadedAt: inputs.uploadedAt,
     client: inputs.client,
@@ -162,15 +190,17 @@ export async function uploadFile(
   });
   await uploadEncryptedFile(encryptedFile, { ...context, servers: inputs.servers });
   throwIfAborted(context.signal);
-  const { event, result: publishResult } = await context.dataLayer.publish(metadata.event);
+  const event = metadata.event;
+  const publishResult = await context.store.publishEvent(event);
   if (!publishResult.ok) throw new Error("No relay accepted the file metadata event");
   return { encryptedFile, metadata, event, publishResult };
 }
 
 export async function shareFile(file: File, context: ShareFileContext): Promise<ShareFileResult> {
-  const { dataLayer, ...options } = context;
+  const { store, ...options } = context;
   const shared = createSharedFileMetadata(file, options);
-  const { event: signedEvent, result: publishResult } = await dataLayer.publish(shared.event);
+  const signedEvent = shared.event;
+  const publishResult = await store.publishEvent(signedEvent);
   if (!publishResult.ok) throw new Error("No relay accepted the shared file metadata event");
   return { ...shared, signedEvent, publishResult };
 }

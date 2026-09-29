@@ -105,27 +105,6 @@ importers:
         specifier: ^5.4.0
         version: 5.4.21(@types/node@20.19.42)
 
-  packages/drive-sdk:
-    dependencies:
-      '@sinclair/typebox':
-        specifier: ^0.34.41
-        version: 0.34.52
-      nostr-tools:
-        specifier: ^2.23.5
-        version: 2.23.5(typescript@5.9.3)
-    devDependencies:
-      '@vitest/coverage-v8':
-        specifier: ^2.0.0
-        version: 2.1.9(vitest@2.1.9(@types/node@20.19.42)(happy-dom@15.11.7))
-      tsup:
-        specifier: ^8.0.0
-        version: 8.5.1(postcss@8.5.15)(typescript@5.9.3)
-      typescript:
-        specifier: ^5.5.0
-        version: 5.9.3
-      vitest:
-        specifier: ^2.0.0
-        version: 2.1.9(@types/node@20.19.42)(happy-dom@15.11.7)
   packages/calendar-sdk:
     dependencies:
       '@noble/hashes':
@@ -153,6 +132,31 @@ importers:
       vitest:
         specifier: ^3.2.4
         version: 3.2.7(@types/node@20.19.42)(happy-dom@15.11.7)
+
+  packages/drive-sdk:
+    dependencies:
+      '@sinclair/typebox':
+        specifier: ^0.34.41
+        version: 0.34.52
+      nostr-tools:
+        specifier: ^2.23.5
+        version: 2.23.5(typescript@5.9.3)
+    devDependencies:
+      '@formstr/local-relay':
+        specifier: workspace:*
+        version: link:../local-relay
+      '@vitest/coverage-v8':
+        specifier: ^2.0.0
+        version: 2.1.9(vitest@2.1.9(@types/node@20.19.42)(happy-dom@15.11.7))
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.15)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9(@types/node@20.19.42)(happy-dom@15.11.7)
 
   packages/kanban-sdk:
     dependencies:

@@ -1,4 +1,6 @@
 import type { Event, EventTemplate, Filter } from "nostr-tools";
+import type { DriveKeyring } from "./drive-key.js";
+import type { FileEntry } from "./file-entry.js";
 import type { File, Folder } from "./schema.js";
 
 export type FolderEntry = Folder & { id: string };
@@ -54,8 +56,6 @@ export interface FileEventStore {
   publishEvent(event: Event, options?: { relays?: string[] }): Promise<FilePublishResult>;
   /** Relays an event was observed on. Only needed to prove relay coverage (see docs/adr/0003). */
   seenOn?(eventId: string): Promise<string[]>;
-  /** @deprecated removed in the signing commit — events are signed here, not by the store. */
-  publish(template: EventTemplate): Promise<{ event: Event; result: FilePublishResult }>;
 }
 
 export interface FileProgress {
@@ -83,17 +83,20 @@ export interface BlossomTransport {
 }
 
 export interface FetchFilesContext {
-  dataLayer: FileEventStore;
-  metadataConversationKey: Uint8Array;
-  onFiles: (files: File[]) => void;
+  store: FileEventStore;
+  keyring: DriveKeyring;
+  /** Extra constraints; `authors` defaults to every Drive Key pubkey in the keyring. */
+  filter?: Filter;
+  onFiles: (files: FileEntry[]) => void;
   onEose?: () => void;
   onError?: (error: unknown) => void;
   relayHints?: string[];
 }
 
 export interface FetchFoldersContext {
-  dataLayer: FileEventStore;
-  metadataConversationKey: Uint8Array;
+  store: FileEventStore;
+  keyring: DriveKeyring;
+  filter?: Filter;
   onFolders: (folders: FolderEntry[]) => void;
   onEose?: () => void;
   onError?: (error: unknown) => void;
@@ -142,7 +145,7 @@ export interface FileMetadataInputs {
   encryptionKey: string;
   blobHash: string;
   chunkSize: number;
-  metadataConversationKey: Uint8Array;
+  keyring: DriveKeyring;
   previewHash?: string;
   uploadedAt?: number;
   client?: string;
@@ -153,13 +156,14 @@ export interface FileMetadataInputs {
 export interface CreatedFileMetadata {
   d: string;
   file: File;
-  event: EventTemplate;
+  /** Signed with the active Drive Key. */
+  event: Event;
 }
 
 export interface FolderMetadataInputs {
   name: string;
   parent: string;
-  metadataConversationKey: Uint8Array;
+  keyring: DriveKeyring;
   client?: string;
   d?: string;
   createdAt?: number;
@@ -168,7 +172,7 @@ export interface FolderMetadataInputs {
 export interface CreatedFolderMetadata {
   d: string;
   folder: Folder;
-  event: EventTemplate;
+  event: Event;
 }
 
 export interface UploadFileInputs {
@@ -176,7 +180,6 @@ export interface UploadFileInputs {
   type: string;
   parent: string;
   servers: string[];
-  metadataConversationKey: Uint8Array;
   previewHash?: string;
   uploadedAt?: number;
   client?: string;
@@ -186,7 +189,8 @@ export interface UploadFileInputs {
 }
 
 export interface UploadFileContext extends Omit<UploadBlobContext, "servers"> {
-  dataLayer: FileEventStore;
+  store: FileEventStore;
+  keyring: DriveKeyring;
 }
 
 export interface UploadFileResult {
@@ -197,6 +201,7 @@ export interface UploadFileResult {
 }
 
 export interface SharedFileOptions {
+  keyring: DriveKeyring;
   client?: string;
   d?: string;
   createdAt?: number;
@@ -207,11 +212,11 @@ export interface CreatedSharedFileMetadata {
   file: File;
   sharingKey: string;
   publicSharingKey: string;
-  event: EventTemplate;
+  event: Event;
 }
 
 export interface ShareFileContext extends SharedFileOptions {
-  dataLayer: FileEventStore;
+  store: FileEventStore;
 }
 
 export interface ShareFileResult extends CreatedSharedFileMetadata {

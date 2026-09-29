@@ -1,7 +1,8 @@
 import { generateSecretKey, getPublicKey, nip44 } from "nostr-tools";
 import { bytesToHex, hexToBytes } from "nostr-tools/utils";
 import { sha256Hex } from "./encoding.js";
-import { assertFile, type File } from "./schema.js";
+import { toBlobFile, type BlobFile, type FileEntry } from "./file-entry.js";
+import type { File } from "./schema.js";
 import { DEFAULT_CHUNK_SIZE } from "./constants.js";
 import type { EncryptedFile } from "./types.js";
 
@@ -81,8 +82,8 @@ export async function encryptFile(
   };
 }
 
-export async function decryptFileBytes(encryptedBlob: Uint8Array, file: File): Promise<Uint8Array> {
-  assertFile(file);
+export async function decryptFileBytes(encryptedBlob: Uint8Array, source: File | FileEntry | BlobFile): Promise<Uint8Array> {
+  const file = toBlobFile(source);
   if (await sha256Hex(encryptedBlob) !== file.blobHash.toLowerCase()) {
     throw new Error("Encrypted blob hash does not match file metadata");
   }
@@ -115,7 +116,8 @@ export async function decryptFileBytes(encryptedBlob: Uint8Array, file: File): P
     plaintextOffset += plaintextLength;
   }
 
-  if (await sha256Hex(plaintext) !== file.unencryptedFileHash.toLowerCase()) {
+  // Optional in the app's metadata shape: verified whenever it is there.
+  if (file.unencryptedFileHash !== undefined && await sha256Hex(plaintext) !== file.unencryptedFileHash.toLowerCase()) {
     throw new Error("Decrypted file hash does not match file metadata");
   }
   return plaintext;
