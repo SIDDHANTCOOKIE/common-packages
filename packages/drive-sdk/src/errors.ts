@@ -58,6 +58,22 @@ export class AppShapedFileError extends DriveSdkError {
   }
 }
 
+/** The blob stream ended before every segment arrived. */
+export class BlobTruncatedError extends DriveSdkError {}
+
+/** The blob stream carried bytes past the last segment. */
+export class BlobOverrunError extends DriveSdkError {}
+
+/** The decrypted plaintext does not hash to `unencryptedFileHash`. */
+export class IntegrityError extends DriveSdkError {}
+
+/** The server ignored the Range header (answered 200 with the whole blob); nothing was decoded. */
+export class RangeNotSatisfiedError extends DriveSdkError {
+  constructor() {
+    super("The server ignored the Range request (200 instead of 206); refusing to decode misaligned bytes");
+  }
+}
+
 /** The pasted/decoded share link is malformed, has the wrong key, or points at something that is not a file share. */
 export class InvalidShareLinkError extends DriveSdkError {}
 

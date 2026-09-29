@@ -1,9 +1,23 @@
 export { createBlossomAuthorization, createFetchBlossomTransport } from "./blossom.js";
 export { BLOSSOM_AUTH_KIND, DEFAULT_CHUNK_SIZE, DRIVE_SDK_CLIENT, METADATA_KIND } from "./constants.js";
-export { decryptFileBytes, encryptFile } from "./crypto.js";
+export {
+  decryptFileBytes,
+  decryptSegment,
+  deriveBlobKey,
+  encryptFile,
+  encryptSegment,
+  segmentCount,
+  segmentFrameLength,
+} from "./crypto.js";
+export { decryptRange, streamDecrypt } from "./stream.js";
+export type { ByteReader, FetchRange, RangeResponse } from "./stream.js";
 export { MAX_CREATED_AT_DRIFT_SECONDS, nextCreatedAt } from "./clock.js";
 export {
   AppShapedFileError,
+  BlobOverrunError,
+  BlobTruncatedError,
+  IntegrityError,
+  RangeNotSatisfiedError,
   DriveKeyDroppedError,
   DriveKeyMintRefusedError,
   DriveKeyUnavailableError,

@@ -135,6 +135,9 @@ importers:
 
   packages/drive-sdk:
     dependencies:
+      '@noble/hashes':
+        specifier: ^1.8.0
+        version: 1.8.0
       '@sinclair/typebox':
         specifier: ^0.34.41
         version: 0.34.52

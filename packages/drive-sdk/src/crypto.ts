@@ -21,9 +21,24 @@ export function conversationKeyFromSecret(secretHex: string): Uint8Array {
   return nip44.v2.utils.getConversationKey(secret, getPublicKey(secret));
 }
 
+/**
+ * Number of segments a file of `size` bytes splits into. Always at least 1: an empty file still has
+ * exactly one, empty, last segment. An exact multiple of `chunkSize` gets no trailing empty segment.
+ */
+export function segmentCount(size: number, chunkSize: number): number {
+  return Math.max(1, Math.ceil(size / chunkSize));
+}
+
+/**
+ * The NIP-FS per-segment nonce: an 11-byte big-endian counter, then 0x01 on the final segment and 0x00
+ * otherwise. Never random and never stored; the decryptor rebuilds it from a segment's position.
+ */
 function segmentNonce(index: number, isLast: boolean): Uint8Array {
-  const nonce = new Uint8Array(NONCE_BYTES);
+  if (!Number.isInteger(index) || index < 0) throw new Error(`Segment index must be a non-negative integer, got ${index}`);
+  // BigInt, not bit ops: JS shifts truncate to 32 bits past 2^31.
   let value = BigInt(index);
+  if (value >= 1n << 88n) throw new Error(`Segment index too large to encode in 11 bytes: ${index}`);
+  const nonce = new Uint8Array(NONCE_BYTES);
   for (let offset = 10; offset >= 0; offset -= 1) {
     nonce[offset] = Number(value & 0xffn);
     value >>= 8n;
@@ -32,14 +47,39 @@ function segmentNonce(index: number, isLast: boolean): Uint8Array {
   return nonce;
 }
 
-async function aesKey(encryptionKey: string, usage: KeyUsage): Promise<CryptoKey> {
-  return crypto.subtle.importKey(
-    "raw",
-    conversationKeyFromSecret(encryptionKey) as BufferSource,
-    "AES-GCM",
-    false,
-    [usage],
-  );
+function importBlobKey(blobKey: Uint8Array, usage: KeyUsage): Promise<CryptoKey> {
+  if (blobKey.length !== 32) throw new Error(`blobKey must be 32 bytes, got ${blobKey.length}`);
+  return crypto.subtle.importKey("raw", blobKey as BufferSource, "AES-GCM", false, [usage]);
+}
+
+/** The 32-byte AES key a file's `encryptionKey` secret yields: its NIP-44 self conversation key. */
+export function deriveBlobKey(encryptionKey: string): Uint8Array {
+  return conversationKeyFromSecret(encryptionKey);
+}
+
+/**
+ * Encrypts one NIP-FS segment: AES-256-GCM directly under `blobKey` (no HKDF) with the positional
+ * nonce. Output is `ciphertext || tag(16)`. Pure and per-segment, so a host can stream. Rejects an
+ * index that overflows the 11-byte counter.
+ */
+export async function encryptSegment(plaintext: Uint8Array, blobKey: Uint8Array, index: number, isLast: boolean): Promise<Uint8Array> {
+  const key = await importBlobKey(blobKey, "encrypt");
+  return new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: segmentNonce(index, isLast) as BufferSource }, key, plaintext as BufferSource));
+}
+
+/**
+ * Inverse of {@link encryptSegment}. `isLast` means the FILE's last segment, not the last one in a
+ * fetched range. A wrong index or flag fails the GCM tag instead of returning wrong plaintext.
+ */
+export async function decryptSegment(payload: Uint8Array, blobKey: Uint8Array, index: number, isLast: boolean): Promise<Uint8Array> {
+  const key = await importBlobKey(blobKey, "decrypt");
+  return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: segmentNonce(index, isLast) as BufferSource }, key, payload as BufferSource));
+}
+
+/** Ciphertext bytes of the segment at `index`: the last one is short. */
+export function segmentFrameLength(file: { size: number; chunkSize: number }, index: number): number {
+  const total = segmentCount(file.size, file.chunkSize);
+  return (index === total - 1 ? file.size - file.chunkSize * (total - 1) : file.chunkSize) + AES_GCM_TAG_BYTES;
 }
 
 function sourceBytes(source: Blob | Uint8Array): Promise<Uint8Array> | Uint8Array {
@@ -55,19 +95,15 @@ export async function encryptFile(
   assertChunkSize(chunkSize);
   const plaintext = await sourceBytes(source);
   const encryptionKey = options.encryptionKey ?? bytesToHex(generateSecretKey());
-  const key = await aesKey(encryptionKey, "encrypt");
-  const segmentCount = Math.max(1, Math.ceil(plaintext.byteLength / chunkSize));
-  const encrypted = new Uint8Array(plaintext.byteLength + segmentCount * AES_GCM_TAG_BYTES);
+  // The buffered path is the per-segment primitive in a loop, so the two can never drift apart.
+  const blobKey = deriveBlobKey(encryptionKey);
+  const total = segmentCount(plaintext.byteLength, chunkSize);
+  const encrypted = new Uint8Array(plaintext.byteLength + total * AES_GCM_TAG_BYTES);
   let encryptedOffset = 0;
 
-  for (let index = 0; index < segmentCount; index += 1) {
-    const isLast = index === segmentCount - 1;
+  for (let index = 0; index < total; index += 1) {
     const segment = plaintext.subarray(index * chunkSize, Math.min(plaintext.byteLength, (index + 1) * chunkSize));
-    const sealed = new Uint8Array(await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv: segmentNonce(index, isLast) as BufferSource },
-      key,
-      segment as BufferSource,
-    ));
+    const sealed = await encryptSegment(segment, blobKey, index, index === total - 1);
     encrypted.set(sealed, encryptedOffset);
     encryptedOffset += sealed.byteLength;
   }
@@ -88,27 +124,22 @@ export async function decryptFileBytes(encryptedBlob: Uint8Array, source: File |
     throw new Error("Encrypted blob hash does not match file metadata");
   }
 
-  const segmentCount = Math.max(1, Math.ceil(file.size / file.chunkSize));
-  const expectedEncryptedSize = file.size + segmentCount * AES_GCM_TAG_BYTES;
+  const total = segmentCount(file.size, file.chunkSize);
+  const expectedEncryptedSize = file.size + total * AES_GCM_TAG_BYTES;
   if (encryptedBlob.byteLength !== expectedEncryptedSize) {
     throw new Error("Encrypted blob size does not match file metadata");
   }
 
-  const key = await aesKey(file.encryptionKey, "decrypt");
+  const blobKey = deriveBlobKey(file.encryptionKey);
   const plaintext = new Uint8Array(file.size);
   let encryptedOffset = 0;
   let plaintextOffset = 0;
-  for (let index = 0; index < segmentCount; index += 1) {
-    const isLast = index === segmentCount - 1;
-    const plaintextLength = isLast ? file.size - index * file.chunkSize : file.chunkSize;
+  for (let index = 0; index < total; index += 1) {
+    const plaintextLength = index === total - 1 ? file.size - index * file.chunkSize : file.chunkSize;
     const sealedLength = plaintextLength + AES_GCM_TAG_BYTES;
     try {
-      const segment = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv: segmentNonce(index, isLast) as BufferSource },
-        key,
-        encryptedBlob.subarray(encryptedOffset, encryptedOffset + sealedLength) as BufferSource,
-      );
-      plaintext.set(new Uint8Array(segment), plaintextOffset);
+      const segment = await decryptSegment(encryptedBlob.subarray(encryptedOffset, encryptedOffset + sealedLength), blobKey, index, index === total - 1);
+      plaintext.set(segment, plaintextOffset);
     } catch (error) {
       throw new Error(`Failed to decrypt NIP-FS segment ${index}`, { cause: error });
     }
