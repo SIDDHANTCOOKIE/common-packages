@@ -71,6 +71,8 @@ async function writeShareInfo(
   context: ShareContext,
   d: string,
   payload: Omit<ShareInfoPayload, "v">,
+  /** created_at of the bookkeeping event being superseded: the rewrite must beat it, clamp or not. */
+  replacesCreatedAt?: number,
 ): Promise<void> {
   const active = context.keyring.active;
   const event = buildEvent({
@@ -79,6 +81,7 @@ async function writeShareInfo(
     payload: { v: 1, ...payload } satisfies ShareInfoPayload,
     conversationKey: active.conversationKey,
     signingKey: hexToBytes(active.secretKeyHex),
+    ...(replacesCreatedAt !== undefined ? { createdAt: Math.max(nextCreatedAt(), replacesCreatedAt + 1) } : {}),
     ...(context.client ? { client: context.client } : {}),
   });
   const result = await context.store.publishEvent(event);
@@ -350,7 +353,7 @@ export async function revokeShare(entry: SharedByMeEntry, context: ShareContext)
       members: entry.members,
       encryptionKey: entry.encryptionKey,
       revokedAt: at,
-    });
+    }, entry.sharedAtSeconds);
   } catch (error) {
     infoError = error;
   }
