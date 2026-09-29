@@ -5,9 +5,9 @@ import { tagValue } from "./events.js";
 import { toBlobFile, type BlobFile, type FileEntry } from "./file-entry.js";
 import { decryptFileBytes, encryptFile } from "./crypto.js";
 import { throwIfAborted } from "./encoding.js";
-import { createFileMetadata, createSharedFileMetadata, decryptFileEntry, decryptFolderMetadata, keyringConversationKeys } from "./metadata.js";
+import { createFileMetadata, decryptFileEntry, decryptFolderMetadata, keyringConversationKeys } from "./metadata.js";
 import type { File, Folder } from "./schema.js";
-import type { DownloadFileContext, EncryptedFile, FileFetchHandle, FetchFilesContext, FetchFoldersContext, FolderEntry, FolderFetchHandle, ShareFileContext, ShareFileResult, UploadBlobContext, UploadFileContext, UploadFileInputs, UploadFileResult } from "./types.js";
+import type { DownloadFileContext, EncryptedFile, FileFetchHandle, FetchFilesContext, FetchFoldersContext, FolderEntry, FolderFetchHandle, UploadBlobContext, UploadFileContext, UploadFileInputs, UploadFileResult } from "./types.js";
 import type { Event, Filter } from "nostr-tools";
 
 function emitProgress(
@@ -194,13 +194,4 @@ export async function uploadFile(
   const publishResult = await context.store.publishEvent(event);
   if (!publishResult.ok) throw new Error("No relay accepted the file metadata event");
   return { encryptedFile, metadata, event, publishResult };
-}
-
-export async function shareFile(file: File, context: ShareFileContext): Promise<ShareFileResult> {
-  const { store, ...options } = context;
-  const shared = createSharedFileMetadata(file, options);
-  const signedEvent = shared.event;
-  const publishResult = await store.publishEvent(signedEvent);
-  if (!publishResult.ok) throw new Error("No relay accepted the shared file metadata event");
-  return { ...shared, signedEvent, publishResult };
 }

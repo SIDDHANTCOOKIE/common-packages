@@ -58,6 +58,23 @@ export class AppShapedFileError extends DriveSdkError {
   }
 }
 
+/** The pasted/decoded share link is malformed, has the wrong key, or points at something that is not a file share. */
+export class InvalidShareLinkError extends DriveSdkError {}
+
+/** No event was found at the link's coordinate within the timeout (bad link, or relays unreachable). */
+export class ShareNotFoundError extends DriveSdkError {
+  constructor() {
+    super("This share link could not be found. It may be invalid, or the relays are unreachable.");
+  }
+}
+
+/** Revoking needs the Drive Key that authored the share; the keyring no longer holds it. */
+export class ShareKeyMissingError extends DriveSdkError {
+  constructor(pubkey: string) {
+    super(`This share was created with a Drive Key this keyring does not hold (${pubkey})`);
+  }
+}
+
 /** Folder sharing (`t=container`) is out of scope for this SDK. */
 export class FolderShareUnsupportedError extends DriveSdkError {
   constructor(operation = "resolve") {

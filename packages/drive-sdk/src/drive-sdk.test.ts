@@ -8,11 +8,9 @@ import {
   createBlossomAuthorization,
   createFetchBlossomTransport,
   createFileMetadata,
-  createSharedFileMetadata,
   decryptFileBytes,
   decryptFileMetadata,
   decryptFolderMetadata,
-  decryptSharedFileMetadata,
   downloadFile,
   driveKeyEntry,
   encryptFile,
@@ -24,7 +22,6 @@ import {
   isFolder,
   METADATA_KIND,
   DRIVE_SDK_CLIENT,
-  shareFile,
   uploadEncryptedFile,
   uploadFile,
   type BlossomTransport,
@@ -353,37 +350,6 @@ describe("folder metadata", () => {
     expect(received.at(-1)).toEqual([]);
     expect(onError).toHaveBeenCalledOnce();
     handle.stop();
-  });
-});
-
-describe("file sharing", () => {
-  it("duplicates metadata into a shared-file event encrypted to a fresh ephemeral pair", async () => {
-    const { file } = await encryptedFixture();
-    const shared = createSharedFileMetadata(file, { keyring: testKeyring(), d: "share123", createdAt: 77, client: "test" });
-
-    expect(shared.sharingKey).toMatch(/^[0-9a-f]{64}$/);
-    expect(shared.publicSharingKey).toBe(getPublicKey(hexToBytes(shared.sharingKey)));
-    expect(shared.event).toMatchObject({ kind: 34578, created_at: 77 });
-    expect(shared.event.tags).toEqual([["d", "share123"], ["t", "shared-file"], ["client", "test"], ["encrypted", "nip44"]]);
-    expect(shared.event.pubkey).toBe(testKeyring().active.publicKey); // authored by the Drive Key
-    expect(decryptSharedFileMetadata(shared.event.content, shared.sharingKey)).toEqual(file);
-    expect(() => decryptSharedFileMetadata(shared.event.content, ENCRYPTION_KEY)).toThrow();
-  });
-
-  it("generates sharing keys, validates input, and publishes without uploading a blob", async () => {
-    const { file } = await encryptedFixture();
-    const store = memoryStore();
-    const result = await shareFile(file, { store: store.store, keyring: testKeyring() });
-    expect(result.sharingKey).toMatch(/^[0-9a-f]{64}$/);
-    expect(result.signedEvent.tags).toContainEqual(["t", "shared-file"]);
-    expect(result.publishResult.ok).toBe(true);
-    expect(store.published).toHaveLength(1);
-    expect(createSharedFileMetadata(file, { keyring: testKeyring() }).sharingKey).not.toBe(result.sharingKey);
-  });
-
-  it("reports publication failure", async () => {
-    const { file } = await encryptedFixture();
-    await expect(shareFile(file, { store: memoryStore(false).store, keyring: testKeyring() })).rejects.toThrow("No relay accepted");
   });
 });
 

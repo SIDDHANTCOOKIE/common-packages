@@ -10,7 +10,10 @@ export {
   DriveSdkError,
   FolderShareUnsupportedError,
   InvalidFileMetadataError,
+  InvalidShareLinkError,
   LegacyChunkedFileError,
+  ShareKeyMissingError,
+  ShareNotFoundError,
 } from "./errors.js";
 export { buildEvent, decryptWithKeys } from "./events.js";
 export type { BuildEventArgs, EventSubtype } from "./events.js";
@@ -41,15 +44,14 @@ export type {
   PublishedDriveKey,
   RotateDriveKeyOptions,
 } from "./drive-key.js";
-export { downloadFile, fetchFiles, fetchFolders, shareFile, uploadEncryptedFile, uploadFile } from "./files.js";
-export { createFileMetadata, createFolderMetadata, createSharedFileMetadata, decryptFileEntry, decryptFileMetadata, decryptFolderMetadata, decryptSharedFileMetadata, keyringConversationKeys, randomDTag } from "./metadata.js";
+export { downloadFile, fetchFiles, fetchFolders, uploadEncryptedFile, uploadFile } from "./files.js";
+export { createFileMetadata, createFolderMetadata, decryptFileEntry, decryptFileMetadata, decryptFolderMetadata, keyringConversationKeys, randomDTag } from "./metadata.js";
 export { assertEncryptionKeyMetadata, assertFile, assertFolder, encryptionKeyMetadataSchema, fileSchema, folderSchema, isEncryptionKeyMetadata, isFile, isFolder } from "./schema.js";
 export type { EncryptionKeyMetadata, File, Folder } from "./schema.js";
 export type {
   BlossomTransport,
   CreatedFileMetadata,
   CreatedFolderMetadata,
-  CreatedSharedFileMetadata,
   DownloadFileContext,
   EncryptedFile,
   FetchFilesContext,
@@ -66,11 +68,32 @@ export type {
   FileRelayOutcome,
   IdentityEncryptionSigner,
   IdentitySigner,
-  ShareFileContext,
-  ShareFileResult,
-  SharedFileOptions,
   UploadBlobContext,
   UploadFileContext,
   UploadFileInputs,
   UploadFileResult,
 } from "./types.js";
+export { publishDeletionRequest } from "./deletion.js";
+export {
+  buildCoordinate,
+  decodePointer,
+  decodeShareLink,
+  encodeShareLink,
+  parseCoordinate,
+  SHARE_HASH_PREFIX,
+} from "./sharing/link.js";
+export type { EncodeShareLinkParams } from "./sharing/link.js";
+export { collectEvents, fetchEventByCoordinate, relaysFromPublish } from "./sharing/relay.js";
+export { createFileShare, ensureFileShare, listShares, resolveShare, revokeShare } from "./sharing/shares.js";
+export type {
+  ResolvedShare,
+  ResolveShareContext,
+  RevokedSharePayload,
+  RevokeResult,
+  ShareContext,
+  ShareLinkPayload,
+  ShareMember,
+  ShareResult,
+  ShareSource,
+  SharedByMeEntry,
+} from "./sharing/types.js";

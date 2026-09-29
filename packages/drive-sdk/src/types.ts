@@ -199,27 +199,3 @@ export interface UploadFileResult {
   event: Event;
   publishResult: FilePublishResult;
 }
-
-export interface SharedFileOptions {
-  keyring: DriveKeyring;
-  client?: string;
-  d?: string;
-  createdAt?: number;
-}
-
-export interface CreatedSharedFileMetadata {
-  d: string;
-  file: File;
-  sharingKey: string;
-  publicSharingKey: string;
-  event: Event;
-}
-
-export interface ShareFileContext extends SharedFileOptions {
-  store: FileEventStore;
-}
-
-export interface ShareFileResult extends CreatedSharedFileMetadata {
-  signedEvent: Event;
-  publishResult: FilePublishResult;
-}

@@ -1,6 +1,4 @@
-import { generateSecretKey, getPublicKey } from "nostr-tools";
-import { bytesToHex, hexToBytes } from "nostr-tools/utils";
-import { conversationKeyFromSecret } from "./crypto.js";
+import { hexToBytes } from "nostr-tools/utils";
 import { keyringEntries, type DriveKeyring } from "./drive-key.js";
 import { buildEvent, decryptWithKeys, tagValue } from "./events.js";
 import { readFileMetadata, type FileEntry } from "./file-entry.js";
@@ -8,10 +6,8 @@ import { assertFile, assertFolder, type File, type Folder } from "./schema.js";
 import {
   type CreatedFileMetadata,
   type CreatedFolderMetadata,
-  type CreatedSharedFileMetadata,
   type FileMetadataInputs,
   type FolderMetadataInputs,
-  type SharedFileOptions,
 } from "./types.js";
 
 const ALPHANUMERIC = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
@@ -80,26 +76,4 @@ export function decryptFolderMetadata(content: string, keys: Uint8Array | readon
 /** Conversation keys of a keyring, active first — the order metadata decryption tries them. */
 export function keyringConversationKeys(keyring: DriveKeyring): Uint8Array[] {
   return keyringEntries(keyring).map((entry) => entry.conversationKey);
-}
-
-export function createSharedFileMetadata(file: File, options: SharedFileOptions): CreatedSharedFileMetadata {
-  assertFile(file);
-  const secret = generateSecretKey();
-  const sharingKey = bytesToHex(secret);
-  const publicSharingKey = getPublicKey(secret);
-  const d = options.d ?? randomDTag();
-  const event = buildEvent({
-    subtype: "shared-file",
-    d,
-    payload: file,
-    conversationKey: conversationKeyFromSecret(sharingKey),
-    signingKey: hexToBytes(options.keyring.active.secretKeyHex),
-    ...(options.createdAt !== undefined ? { createdAt: options.createdAt } : {}),
-    ...(options.client !== undefined ? { client: options.client } : {}),
-  });
-  return { d, file, sharingKey, publicSharingKey, event };
-}
-
-export function decryptSharedFileMetadata(content: string, sharingKey: string): File {
-  return decryptFileMetadata(content, conversationKeyFromSecret(sharingKey));
 }
